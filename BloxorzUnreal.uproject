@@ -3,5 +3,6 @@
   "EngineAssociation": "5.8",
   "Category": "Games",
   "Description": "A deterministic, portfolio-quality Bloxorz-style puzzle game.",
-  "Modules": [{ "Name": "BloxorzUnreal", "Type": "Runtime", "LoadingPhase": "Default" }]
+  "Modules": [{ "Name": "BloxorzUnreal", "Type": "Runtime", "LoadingPhase": "Default" }],
+  "Plugins": [{"Name":"PythonScriptPlugin","Enabled":true},{"Name":"EditorScriptingUtilities","Enabled":true},{"Name":"Niagara","Enabled":true},{"Name":"AndroidFileServer","Enabled":false}]
 }

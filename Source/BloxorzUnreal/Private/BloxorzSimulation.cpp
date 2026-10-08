@@ -33,6 +33,7 @@ FBloxorzBlockState FBloxorzSimulation::ApplyRoll(const FBloxorzBlockState& S, EB
 
 const FBloxorzTile* FBloxorzSimulation::FindTile(const FBloxorzLevelData& Level, FIntPoint P)
 {
+    if (P.X < 0 || P.Y < 0 || P.X >= Level.GridSize.X || P.Y >= Level.GridSize.Y) return nullptr;
     return Level.Tiles.FindByPredicate([P](const FBloxorzTile& T){ return T.Position == P && T.Type != EBloxorzTileType::Empty; });
 }
 
@@ -58,7 +59,7 @@ FBloxorzMoveResult FBloxorzSimulation::ResolveMove(const FBloxorzLevelData& Leve
         if (Tile->SwitchBehavior == EBloxorzSwitchBehavior::HeavyOneShot)
         {
             if (Result.State.Block.Orientation != EBloxorzOrientation::Standing) continue;
-            const FName TriggerKey(*FString::Printf(TEXT("switch:%s:%d,%d"), *Tile->Id.ToString(), Cell.X, Cell.Y));
+            const FName TriggerKey(*(Tile->Id.IsNone() ? FString::Printf(TEXT("switch:%d,%d:triggered"), Cell.X, Cell.Y) : FString::Printf(TEXT("switch:%s:triggered"), *Tile->Id.ToString())));
             if (Result.State.Flags.FindRef(TriggerKey) != 0) continue;
             Result.State.Flags.Add(TriggerKey, 1);
         }
