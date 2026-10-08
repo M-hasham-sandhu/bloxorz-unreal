@@ -1,0 +1,7 @@
+{
+  "FileVersion": 3,
+  "EngineAssociation": "5.8",
+  "Category": "Games",
+  "Description": "A deterministic, portfolio-quality Bloxorz-style puzzle game.",
+  "Modules": [{ "Name": "BloxorzUnreal", "Type": "Runtime", "LoadingPhase": "Default" }]
+}
