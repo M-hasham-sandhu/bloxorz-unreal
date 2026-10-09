@@ -9,6 +9,9 @@ class UStaticMeshComponent;
 class UCameraComponent;
 class UNiagaraSystem;
 class USoundWave;
+class UAudioComponent;
+class UBloxorzLevelAsset;
+class UBloxorzCampaignAsset;
 UCLASS()
 class UBloxorzProgress : public USaveGame
 {
@@ -25,13 +28,18 @@ public:
     ABloxorzBoard();
     virtual void BeginPlay() override;
     virtual void Tick(float DeltaSeconds) override;
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Level") FBloxorzLevelData Level;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Level") TObjectPtr<UBloxorzLevelAsset> LevelAsset;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Level") TObjectPtr<UBloxorzCampaignAsset> CampaignAsset;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Presentation", meta=(ClampMin="10")) float CellSize = 120.f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Presentation", meta=(ClampMin="0.08")) float RollDuration = .21f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Presentation") float FallDuration = .75f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Presentation") float CameraShakeStrength = 1.1f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Presentation") TObjectPtr<UNiagaraSystem> LandingEffect;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Presentation") TObjectPtr<UNiagaraSystem> CompletionEffect;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Audio", meta=(ClampMin="0",ClampMax="1")) float MusicVolume=.18f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Audio") TObjectPtr<USoundWave> BackgroundMusic;
     UFUNCTION(BlueprintCallable) void RequestMove(EBloxorzDirection Direction);
     UFUNCTION(BlueprintCallable) void Restart();
     UFUNCTION(BlueprintCallable) void Revive();
@@ -47,7 +55,7 @@ public:
     int32 GetLevelIndex() const { return LevelIndex; }
     int32 GetLevelCount() const { return Campaign.Num(); }
     int32 GetRevives() const { return Revives; }
-    int32 GetBest() const { return Progress ? Progress->BestMoves.FindRef(LevelIndex) : 0; }
+    int32 GetBest() const { return Progress && !bCustomPuzzle ? Progress->BestMoves.FindRef(LevelIndex) : 0; }
     bool IsMenuOpen() const { return bMenu; }
     bool IsDead() const { return Phase==EPhase::Failed; }
     bool IsMuted() const { return bMuted; }
@@ -58,6 +66,7 @@ private:
     enum class EPhase : uint8 { Idle, Rolling, Falling, Failed, Completing, Complete };
     struct FTileVisual { int32 Tile=0; int32 Body=0; int32 Cap=0; float Open=1; };
     struct FParticle { FVector Start; FVector Velocity; float Age=0; float Life=1; float Size=1; };
+    struct FPulse { FVector Position; FLinearColor Color; float Age=0; float Life=.45f; float Radius=1; };
     UPROPERTY() TObjectPtr<USceneComponent> SceneRoot;
     UPROPERTY() TObjectPtr<UStaticMeshComponent> BlockMesh;
     UPROPERTY() TObjectPtr<UCameraComponent> Camera;
@@ -66,11 +75,15 @@ private:
     UPROPERTY() TObjectPtr<UInstancedStaticMeshComponent> Marks;
     UPROPERTY() TObjectPtr<UInstancedStaticMeshComponent> Sparks;
     UPROPERTY() TObjectPtr<UStaticMeshComponent> Ground;
+    UPROPERTY() TObjectPtr<UInstancedStaticMeshComponent> PulseMesh;
+    UPROPERTY() TObjectPtr<UAudioComponent> Music;
     UPROPERTY() TObjectPtr<UBloxorzProgress> Progress;
     UPROPERTY() TArray<TObjectPtr<USoundWave>> Sounds;
     TArray<FBloxorzLevelData> Campaign;
     TArray<FTileVisual> TileVisuals;
     TArray<FParticle> Particles;
+    TArray<FPulse> Pulses;
+    float MusicGain=0;
     FBloxorzLevelState State;
     FBloxorzMoveResult Pending;
     FBloxorzBlockState AnimFrom;
@@ -85,6 +98,10 @@ private:
     int32 ReplayIndex=0;
     bool bReplay=false;
     bool bProfile=false;
+    bool bCustomPuzzle=false;
+    bool bExpectedFailure=false;
+    float CaptureDelay=0;
+    FString CaptureFile;
     TArray<float> ProfileFrameTimes;
     double ReplayFrameTotal=0;
     int32 ReplayFrames=0;
@@ -93,6 +110,7 @@ private:
     void FitCamera();
     void SnapBlock();
     void Burst(FVector Position, int32 Count, float Speed);
+    void Pulse(FVector Position,FLinearColor Color,float Radius=1,float Life=.45f);
     void PlayFeedback(int32 Index, float Volume=1);
     void FinishRoll();
     void SaveProgress();

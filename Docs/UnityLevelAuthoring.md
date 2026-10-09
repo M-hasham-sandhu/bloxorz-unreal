@@ -64,8 +64,8 @@ For an isolated level test, a LevelManager without a nonempty Level Sequence loa
 
 ## 6. Bring it into Unreal
 
-There is currently **no automatic importer**. The Unreal `Docs/UnityCampaign.json` is a snapshot, and the runtime campaign comes from `Source/BloxorzUnreal/Private/BloxorzCampaign.cpp`. Neither editing Unity assets nor changing that JSON alone updates Unreal.
+Unreal now has its own **Tools → Bloxorz Level Designer** and editable assets in `/Game/Levels`. See [the Unreal guide](UnrealLevelAuthoring.md). `Docs/UnityCampaign.json` is still a snapshot, not a live connection to Unity. The one-time migration script does not overwrite edited assets or replace the campaign.
 
 A new port must preserve grid size, start anchor/orientation, goal coordinate, every nonempty tile position/type, IDs, target lists, and switch behavior. Unity enum mappings currently match the port: Empty=0, Normal=1, Fragile=2, Switch=3, Bridge=4, Goal=5; Standing=0, LyingX=1, LyingY=2; Type A=0, Type B=1.
 
-Append the converted level to the Unreal campaign, rebuild, and run the Bloxorz tests and an animated solution replay. Update the campaign test's expected level count when adding levels; it currently asserts 15. For immediate Unreal experimentation, a placed Board actor with a populated Level record overrides the stock campaign. A validated export/import pipeline is the recommended next improvement, not something already present.
+Author/convert the puzzle into a `UBloxorzLevelAsset`, add its reference to `DA_Campaign`, save, and validate/play it. Level changes no longer need a C++ rebuild; the campaign tests read the asset list rather than asserting a fixed count. Automated ongoing Unity synchronization remains future work.

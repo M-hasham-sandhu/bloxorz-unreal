@@ -4,6 +4,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/HUD.h"
 #include "BloxorzGameMode.generated.h"
+class UFont;
 
 UCLASS() class BLOXORZUNREAL_API ABloxorzPlayerController : public APlayerController
 {
@@ -24,6 +25,9 @@ public:
 private:
     struct FButton { FBox2D Box; FName Action; };
     TArray<FButton> Buttons;
+    FName LastPanel;
+    float PanelAge=0;
+    UPROPERTY() TObjectPtr<UFont> DisplayFont;
 };
 
 UCLASS() class BLOXORZUNREAL_API ABloxorzGameMode : public AGameModeBase

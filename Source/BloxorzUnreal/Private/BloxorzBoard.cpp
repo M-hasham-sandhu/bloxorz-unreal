@@ -1,8 +1,10 @@
 #include "BloxorzBoard.h"
 #include "BloxorzCampaign.h"
+#include "BloxorzLevelAsset.h"
 #include "Camera/CameraComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/AudioComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundWave.h"
@@ -41,6 +43,8 @@ ABloxorzBoard::ABloxorzBoard()
     Caps=CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("TileSurfaces"));
     Marks=CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("TileSymbols"));
     Sparks=CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("FeedbackParticles"));
+    PulseMesh=CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("ContactPulses"));PulseMesh->SetupAttachment(SceneRoot);PulseMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);PulseMesh->SetCastShadow(false);PulseMesh->NumCustomDataFloats=3;
+    Music=CreateDefaultSubobject<UAudioComponent>(TEXT("AmbientMusic"));Music->SetupAttachment(SceneRoot);Music->bAutoActivate=false;Music->bIsUISound=true;Music->bAllowSpatialization=false;
     for(auto* C:{Bodies.Get(),Caps.Get(),Marks.Get(),Sparks.Get()}){C->SetupAttachment(SceneRoot); C->SetCollisionEnabled(ECollisionEnabled::NoCollision); C->NumCustomDataFloats=3;}
     Sparks->SetCastShadow(false); Marks->SetCastShadow(false); Caps->SetCastShadow(false);
     BlockMesh=CreateDefaultSubobject<UStaticMeshComponent>(TEXT("RollingBlock")); BlockMesh->SetupAttachment(SceneRoot);
@@ -64,17 +68,24 @@ void ABloxorzBoard::BeginPlay()
 {
     Super::BeginPlay();
     Campaign=MakeBloxorzCampaign();
-    if(!Level.Tiles.IsEmpty()) Campaign={Level};
+    if(CampaignAsset){Campaign.Reset();for(const auto& Ref:CampaignAsset->Levels)if(auto* Asset=Ref.LoadSynchronous())Campaign.Add(Asset->Data);}
+    FString PreviewAsset;
+    if(FParse::Value(FCommandLine::Get(),TEXT("BloxorzLevelAsset="),PreviewAsset))LevelAsset=LoadObject<UBloxorzLevelAsset>(nullptr,*PreviewAsset);
+    if(LevelAsset){Campaign={LevelAsset->Data};bCustomPuzzle=true;}
+    else if(!Level.Tiles.IsEmpty()){Campaign={Level};bCustomPuzzle=true;}
+    if(Campaign.IsEmpty()){UE_LOG(LogTemp,Error,TEXT("No puzzle assets available. Create /Game/Levels/DA_Campaign using Bloxorz Level Designer."));return;}
     if(UGameplayStatics::DoesSaveGameExist(TEXT("ObsidianFoldProgress"),0))Progress=Cast<UBloxorzProgress>(UGameplayStatics::LoadGameFromSlot(TEXT("ObsidianFoldProgress"),0));
     if(!Progress) Progress=Cast<UBloxorzProgress>(UGameplayStatics::CreateSaveGameObject(UBloxorzProgress::StaticClass()));
     for(const TCHAR* Name:{TEXT("Roll"),TEXT("Land"),TEXT("Switch"),TEXT("Fall"),TEXT("Complete")})
         Sounds.Add(LoadObject<USoundWave>(nullptr,*FString::Printf(TEXT("/Game/Audio/%s.%s"),Name,Name)));
-    if(!LandingEffect)LandingEffect=LoadObject<UNiagaraSystem>(nullptr,TEXT("/Game/FX/NS_Landing.NS_Landing"));
     if(!CompletionEffect)CompletionEffect=LoadObject<UNiagaraSystem>(nullptr,TEXT("/Game/FX/NS_Complete.NS_Complete"));
+    if(!BackgroundMusic)BackgroundMusic=LoadObject<USoundWave>(nullptr,TEXT("/Game/Audio/AmbientPuzzle.AmbientPuzzle"));
+    if(BackgroundMusic){Music->SetSound(BackgroundMusic);Music->SetVolumeMultiplier(MusicVolume);Music->FadeIn(2.f,MusicVolume);UE_LOG(LogTemp,Display,TEXT("BLOXORZ_MUSIC_READY looping=%d"),BackgroundMusic->bLooping?1:0);}
     int32 Start=0; FParse::Value(FCommandLine::Get(),TEXT("BloxorzLevel="),Start);
     bSmoke=FParse::Param(FCommandLine::Get(),TEXT("BloxorzCapture"));
     bReplay=FParse::Value(FCommandLine::Get(),TEXT("BloxorzReplay="),ReplayPath);
     bProfile=FParse::Param(FCommandLine::Get(),TEXT("BloxorzProfile"));
+    bExpectedFailure=FParse::Param(FCommandLine::Get(),TEXT("BloxorzExpectFall"));
     LoadLevel(Start);
     if(auto* PC=GetWorld()->GetFirstPlayerController()) { PC->SetViewTarget(this); PC->bAutoManageActiveCameraTarget=false; }
 }
@@ -84,7 +95,7 @@ void ABloxorzBoard::LoadLevel(int32 Index)
     if(Campaign.IsEmpty()) return;
     LevelIndex=FMath::Clamp(Index,0,Campaign.Num()-1); Level=Campaign[LevelIndex];
     State={}; State.Block=Level.Start; MoveCount=0; Revives=3; bWon=false; bBuffered=false; Phase=EPhase::Idle; PhaseTime=0; bMenu=false;
-    Particles.Reset(); Sparks->ClearInstances();
+    Particles.Reset(); Sparks->ClearInstances();Pulses.Reset();PulseMesh->ClearInstances();
     BuildVisuals(); SnapBlock(); LandingAge=10;
 }
 
@@ -94,6 +105,7 @@ void ABloxorzBoard::BuildVisuals()
     if(!Cube) Cube=LoadObject<UStaticMesh>(nullptr,TEXT("/Engine/BasicShapes/Cube.Cube"));
     for(auto* C:{Bodies.Get(),Caps.Get(),Marks.Get(),Sparks.Get()}) { C->ClearInstances(); C->SetStaticMesh(Cube); }
     BlockMesh->SetStaticMesh(Cube); Ground->SetStaticMesh(Cube);
+    PulseMesh->SetStaticMesh(Cube);PulseMesh->SetMaterial(0,LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/Art/M_ContactPulse.M_ContactPulse")));
     Bodies->SetMaterial(0,Material(this,FLinearColor(.055f,.075f,.085f),.6f,.32f));
     auto* Instanced=LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/Art/M_Instanced.M_Instanced"));
     Caps->SetMaterial(0,Instanced?Instanced:Material(this,Stone,.3f,.35f));
@@ -200,17 +212,21 @@ void ABloxorzBoard::RequestMove(EBloxorzDirection D)
 }
 void ABloxorzBoard::FinishRoll()
 {
-    if(Pending.Outcome==EBloxorzMoveOutcome::Fell){Phase=EPhase::Falling;PhaseTime=0;bBuffered=false;PlayFeedback(3,.5f);return;}
+    if(Pending.Outcome==EBloxorzMoveOutcome::Fell){Phase=EPhase::Falling;PhaseTime=0;bBuffered=false;PlayFeedback(3,.5f);const auto P=LogicalCenter(AnimFrom,CellSize);Pulse(FVector(P.X,P.Y,3),FLinearColor(1,.35f,.16f),.7f,.35f);return;}
     State=Pending.State; LandingAge=0;
     const FVector P=LogicalCenter(State.Block,CellSize);
-    Burst(FVector(P.X,P.Y,5),6,65);PlayFeedback(1,.5f);
+    Burst(FVector(P.X,P.Y,5),4,48);PlayFeedback(1,.45f);Pulse(FVector(P.X,P.Y,3),Cyan,.65f,.28f);
     // Ordinary landings use bounded mesh sparks. Reserve Niagara for meaningful interactions.
-    if(LandingEffect&&!Pending.ChangedFlags.IsEmpty())UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(),LandingEffect,GetActorTransform().TransformPosition(FVector(P.X,P.Y,3)),FRotator::ZeroRotator,FVector(.08f),true,true,ENCPoolMethod::AutoRelease);
-    if(!Pending.ChangedFlags.IsEmpty()){PlayFeedback(2,.5f);Burst(FVector(P.X,P.Y,10),12,100);}
+    if(!Pending.ChangedFlags.IsEmpty())
+    {
+        if(LandingEffect)UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(),LandingEffect,GetActorTransform().TransformPosition(FVector(P.X,P.Y,3)),FRotator::ZeroRotator,FVector(.08f),true,true,ENCPoolMethod::AutoRelease);
+        PlayFeedback(2,.45f);Burst(FVector(P.X,P.Y,10),8,80);Pulse(FVector(P.X,P.Y,5),Gold,1.1f,.6f);
+        for(const auto& T:Level.Tiles)if(T.Type==EBloxorzTileType::Bridge&&Pending.ChangedFlags.Contains(T.Id))Pulse(FVector(T.Position.X*CellSize,-T.Position.Y*CellSize,3),Gold,.8f,.55f);
+    }
     if(FBloxorzSimulation::IsWin(Level,State))
     {
-        bWon=true;bBuffered=false;Phase=EPhase::Completing;PhaseTime=0;SaveProgress();PlayFeedback(4,.6f);Burst(FVector(P.X,P.Y,10),28,180);
-        if(CompletionEffect)UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(),CompletionEffect,GetActorTransform().TransformPosition(P),FRotator::ZeroRotator,FVector(.35f));
+        bWon=true;bBuffered=false;Phase=EPhase::Completing;PhaseTime=0;SaveProgress();PlayFeedback(4,.55f);Burst(FVector(P.X,P.Y,10),20,130);Pulse(FVector(P.X,P.Y,4),FLinearColor(.2f,1,.68f),1.5f,.9f);
+        if(CompletionEffect)UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(),CompletionEffect,GetActorTransform().TransformPosition(P),FRotator::ZeroRotator,FVector(.16f),true,true,ENCPoolMethod::AutoRelease);
     }
     else Phase=EPhase::Idle;
 }
@@ -233,10 +249,19 @@ void ABloxorzBoard::UpdateTiles(float Dt,bool Snap)
 }
 void ABloxorzBoard::Burst(FVector P,int32 Count,float Speed)
 {
-    for(int I=0;I<Count&&Particles.Num()<100;++I)
+    for(int I=0;I<Count&&Particles.Num()<64;++I)
     {
         const float A=I*2.399963f;FParticle F;F.Start=P;F.Velocity=FVector(FMath::Cos(A)*Speed,FMath::Sin(A)*Speed,Speed*(.5f+(I%3)*.2f));F.Life=.45f+(I%4)*.08f;F.Size=2.f+(I%3);Particles.Add(F);
     }
+}
+void ABloxorzBoard::Pulse(FVector P,FLinearColor Color,float Radius,float Life)
+{
+    if(Pulses.Num()>=8)Pulses.RemoveAt(0);
+    FPulse Effect;Effect.Position=P;Effect.Color=Color;Effect.Radius=Radius;Effect.Life=Life;Pulses.Add(Effect);
+}
+void ABloxorzBoard::EndPlay(const EEndPlayReason::Type Reason)
+{
+    if(Music)Music->Stop();Super::EndPlay(Reason);
 }
 void ABloxorzBoard::PlayFeedback(int32 Index,float Volume)
 {
@@ -245,6 +270,9 @@ void ABloxorzBoard::PlayFeedback(int32 Index,float Volume)
 void ABloxorzBoard::Tick(float Dt)
 {
     Super::Tick(Dt);Elapsed+=Dt;FitCamera();
+    if(CaptureDelay>0){CaptureDelay-=Dt;if(CaptureDelay<=0)FScreenshotRequest::RequestScreenshot(CaptureFile,true,false);}
+    const float TargetGain=bMuted?0.f:MusicVolume*(bMenu?.55f:(Phase==EPhase::Failed?.65f:1.f));
+    MusicGain=FMath::FInterpTo(MusicGain,TargetGain,Dt,2.5f);Music->SetVolumeMultiplier(MusicGain);
     // Bounded real-time smoke profiling. Do not combine with -benchmark's fixed timestep.
     if(bProfile && Elapsed>3) ProfileFrameTimes.Add(Dt*1000.f);
     if(bProfile && Elapsed>20)
@@ -266,14 +294,27 @@ void ABloxorzBoard::Tick(float Dt)
         if(Phase==EPhase::Complete)
         {
             UE_LOG(LogTemp,Display,TEXT("BLOXORZ_REPLAY_SUCCESS level=%d moves=%d frames=%d avg_frame_ms=%.3f"),LevelIndex+1,MoveCount,ReplayFrames,ReplayFrameTotal*1000/FMath::Max(1,ReplayFrames));
-            FScreenshotRequest::RequestScreenshot(FString::Printf(TEXT("Bloxorz_Complete_%02d.png"),LevelIndex+1),true,false);
+            CaptureFile=FString::Printf(TEXT("Bloxorz_Complete_%02d.png"),LevelIndex+1);CaptureDelay=.4f;
             bReplay=false;
         }
-        else if(Phase==EPhase::Failed){UE_LOG(LogTemp,Error,TEXT("BLOXORZ_REPLAY_FAILED at move=%d"),ReplayIndex);bReplay=false;}
+        else if(Phase==EPhase::Failed){if(bExpectedFailure){UE_LOG(LogTemp,Display,TEXT("BLOXORZ_EXPECTED_FALL_VERIFIED"));CaptureFile=TEXT("Bloxorz_Failed_UI.png");CaptureDelay=.4f;}else UE_LOG(LogTemp,Error,TEXT("BLOXORZ_REPLAY_FAILED at move=%d"),ReplayIndex);bReplay=false;}
     }
     LandingAge+=Dt; BufferAge+=Dt;
     Camera->SetRelativeLocation(CameraHome+FVector(0,0,CameraShakeStrength*FMath::Exp(-LandingAge*18)*FMath::Sin(LandingAge*55)));
     UpdateTiles(Dt); Sparks->ClearInstances();
+    PulseMesh->ClearInstances();
+    for(int32 I=Pulses.Num()-1;I>=0;--I)
+    {
+        auto& FX=Pulses[I];FX.Age+=Dt;if(FX.Age>=FX.Life){Pulses.RemoveAtSwap(I);continue;}
+        const float T=FX.Age/FX.Life;const float Radius=CellSize*FX.Radius*(.24f+.5f*T);
+        for(int32 Segment=0;Segment<24;++Segment)
+        {
+            const float A=Segment*2*PI/24;const FVector P=FX.Position+FVector(FMath::Cos(A)*Radius,FMath::Sin(A)*Radius,0);
+            const int32 Index=PulseMesh->AddInstance(FTransform(FRotator(0,FMath::RadiansToDegrees(A)+90,0),P,FVector(Radius*2*PI/24/100.f,.012f*(1-T),.009f*(1-T))));
+            InstanceColor(PulseMesh,Index,FX.Color*FMath::Square(1-T));
+        }
+    }
+    if(!Pulses.IsEmpty())PulseMesh->MarkRenderStateDirty();
     for(int I=Particles.Num()-1;I>=0;--I)
     {
         auto& P=Particles[I];P.Age+=Dt;if(P.Age>=P.Life){Particles.RemoveAtSwap(I);continue;}
@@ -304,14 +345,14 @@ void ABloxorzBoard::Tick(float Dt)
     if(bSmoke&&Elapsed>4&&Elapsed-Dt<=4)FScreenshotRequest::RequestScreenshot(FString::Printf(TEXT("Bloxorz_Level_%02d.png"),LevelIndex+1),true,false);
 }
 void ABloxorzBoard::Restart(){LoadLevel(LevelIndex);}
-void ABloxorzBoard::Revive(){if(Phase!=EPhase::Failed||Revives<=0)return;--Revives;Phase=EPhase::Idle;SnapBlock();Burst(LogicalCenter(State.Block,CellSize),10,80);}
-void ABloxorzBoard::NextLevel(){LoadLevel((LevelIndex+1)%Campaign.Num());}
-void ABloxorzBoard::PreviousLevel(){LoadLevel((LevelIndex+Campaign.Num()-1)%Campaign.Num());}
+void ABloxorzBoard::Revive(){if(Phase!=EPhase::Failed||Revives<=0)return;--Revives;Phase=EPhase::Idle;SnapBlock();const auto P=LogicalCenter(State.Block,CellSize);Burst(P,8,65);Pulse(FVector(P.X,P.Y,3),Cyan,.85f,.55f);}
+void ABloxorzBoard::NextLevel(){if(!Campaign.IsEmpty())LoadLevel((LevelIndex+1)%Campaign.Num());}
+void ABloxorzBoard::PreviousLevel(){if(!Campaign.IsEmpty())LoadLevel((LevelIndex+Campaign.Num()-1)%Campaign.Num());}
 void ABloxorzBoard::ToggleMenu(){bMenu=!bMenu;bBuffered=false;}
 void ABloxorzBoard::ToggleMute(){bMuted=!bMuted;}
 void ABloxorzBoard::SaveProgress()
 {
-    if(bReplay||bSmoke||bProfile)return;
+    if(bReplay||bSmoke||bProfile||bCustomPuzzle)return;
     if(!Progress)return;
     const int32 Old=Progress->BestMoves.FindRef(LevelIndex);
     if(Old==0||MoveCount<Old)Progress->BestMoves.Add(LevelIndex,MoveCount);

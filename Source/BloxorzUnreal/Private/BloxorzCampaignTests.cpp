@@ -2,6 +2,7 @@
 #include "BloxorzSimulation.h"
 #include "BloxorzCampaign.h"
 #include "BloxorzBoard.h"
+#include "BloxorzLevelAsset.h"
 #include "Misc/AutomationTest.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBloxorzPivotTest,"Bloxorz.Presentation.PivotEndpoints",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
@@ -29,7 +30,7 @@ static FString StateKey(const FBloxorzLevelState& S)
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBloxorzCampaignTest,"Bloxorz.Campaign.AllLevelsSolvable",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
 bool FBloxorzCampaignTest::RunTest(const FString&)
 {
-    auto Campaign=MakeBloxorzCampaign();TestEqual(TEXT("15 reference levels"),Campaign.Num(),15);
+    auto Campaign=MakeBloxorzCampaign();TestTrue(TEXT("Campaign has authored assets"),Campaign.Num()>0);
     for(const auto& L:Campaign)
     {
         struct FNode{FBloxorzLevelState S;FString Path;};
@@ -49,6 +50,21 @@ bool FBloxorzCampaignTest::RunTest(const FString&)
         }
         TestTrue(*FString::Printf(TEXT("%s is solvable"),*L.LevelId.ToString()),Solved);
     }
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBloxorzAuthoringTest,"Bloxorz.Authoring.Validator",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+bool FBloxorzAuthoringTest::RunTest(const FString&)
+{
+    const auto Campaign=MakeBloxorzCampaign();
+    for(const auto& L:Campaign){const auto R=FBloxorzLevelValidator::Validate(L);TestTrue(*L.LevelId.ToString(),R.Errors.IsEmpty()&&R.bSolved);}
+    if(Campaign.IsEmpty())return false;
+    FBloxorzLevelData Fixture;Fixture.GridSize={4,1};Fixture.Goal={3,0};
+    for(int32 X=0;X<4;++X){FBloxorzTile Tile;Tile.Position={X,0};Tile.Type=X==3?EBloxorzTileType::Goal:EBloxorzTileType::Normal;Fixture.Tiles.Add(Tile);}
+    auto L=Fixture;
+    const FBloxorzTile Duplicate=L.Tiles[0];L.Tiles.Add(Duplicate);TestTrue(TEXT("Reject duplicate positions"),!FBloxorzLevelValidator::Validate(L).Errors.IsEmpty());
+    L=Fixture;L.Start.Anchor={-1,0};TestTrue(TEXT("Reject unsupported start"),!FBloxorzLevelValidator::Validate(L).Errors.IsEmpty());
+    L=Fixture;L.Tiles.Last().Type=EBloxorzTileType::Normal;TestTrue(TEXT("Require a goal tile"),!FBloxorzLevelValidator::Validate(L).Errors.IsEmpty());
+    L=Fixture;TestTrue(TEXT("Budget exhaustion is unknown, not unsolvable"),FBloxorzLevelValidator::Validate(L,1).bLimitReached);
     return true;
 }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBloxorzHeavyTest,"Bloxorz.Simulation.HeavySwitchAndSupportOrder",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)

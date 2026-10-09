@@ -1,5 +1,15 @@
 # Validation and review checklist
 
+## Asset-backed level designer update
+
+The runtime campaign now loads `/Game/Levels/DA_Campaign` and its `UBloxorzLevelAsset` references, rather than compiled layout arrays. All 15 saved puzzle assets were reloaded and compared with the extracted reference, with positions, tile types, markers, orientations, IDs, target lists and switch behavior preserved. Migration refuses to overwrite existing designer edits.
+
+Development Editor builds successfully with the separate editor-only Slate tool module. Seven Bloxorz automation tests pass, including authoring structure/solver checks and paint/link operations. Tests cover painting, erasing, moving the goal, reverse-order linking, bridge groups, unlinking, and link preservation when changing switch behavior. Solver tests read the current campaign asset and do not assert a fixed campaign count.
+
+See [Unreal authoring](UnrealLevelAuthoring.md) for the actual workflow. Packaged runtime/cooking and large-scale or high-DPI authoring ergonomics still require manual review. This tool creates hand-authored puzzles; it does not procedurally generate difficulty-balanced levels or watch Unity assets.
+
+Background validation also completed the asset-backed level-15 replay in 39 moves. The replay used a fixed benchmark timestep and is behavioral evidence, not a fresh performance measurement. The editor's actual mouse/keyboard authoring, Undo/Redo ergonomics and Play selected button still need interactive verification: no foreground automation was used after the background-only request. Legacy shared switch/bridge IDs are accepted with warnings so the original layouts remain intact.
+
 ## Automated evidence
 
 - Unreal 5.8.3 Development Editor compiled and linked successfully.

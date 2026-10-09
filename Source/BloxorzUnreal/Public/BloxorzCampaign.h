@@ -1,4 +1,4 @@
 #pragma once
 #include "BloxorzSimulation.h"
-/** Imported from the Unity authored campaign, in original sequence order. */
+/** Load designer-owned level assets in DA_Campaign order; no layouts are compiled into code. */
 BLOXORZUNREAL_API TArray<FBloxorzLevelData> MakeBloxorzCampaign();

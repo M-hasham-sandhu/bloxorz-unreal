@@ -1,45 +1,105 @@
-# Obsidian Fold
+# Bloxorz Unreal
 
-A deterministic C++ puzzle game for Unreal Engine 5.8, recreating the behavior and all 15 authored levels of the supplied Unity reference. Presentation uses beveled tiles, a metallic block, restrained teal/amber accents, animated bridges, synthesized sound, Niagara bursts, and a minimal HUD. No Friv branding or presentation assets are used.
+A C++ gameplay-engineering project in **Unreal Engine 5.8**, inspired by a childhood favourite: Bloxorz. The focus is precise grid-based rolling, testable puzzle rules, designer-friendly level authoring, and a cohesive presentation.
 
-![Level 15 gameplay](Docs/Showcase.png)
+[![Gameplay preview](Docs/GameplayPreview.png)](LinkedIn_Bloxorz_36s.mp4)
 
-## Architecture
+[Watch the gameplay highlight](LinkedIn_Bloxorz_36s.mp4) — 36 seconds, 1080p/30 FPS. The edited recording shows rolling, fragile tiles, failure/revive, switches, bridges, and completion. It is a real-time highlights montage, not one uninterrupted playthrough.
 
-`FBloxorzSimulation` accepts immutable level/state records and returns an attempted pose, outcome, new state, and changed flags. Integer grid coordinates and the explicit twelve-transition roll table determine every outcome; there are no world, collision, animation, or physics dependencies.
+## Features
 
-`ABloxorzBoard` owns a presentation state machine: Idle → Rolling → Idle/Falling/Completing. It rotates the mesh around the correct contact edge using a quaternion quarter-turn, then commits the pending logical state at landing. Falling preserves the last valid state. Bridge interpolation and particles never decide support. Grid Y maps to negative world Y so screen directions match the keyboard.
+- Deterministic integer-grid movement with upright and two horizontal orientations, correct contact-edge pivots, smooth quarter-turn animation, and a short input buffer.
+- Normal/fragile tiles, light toggle switches, upright-only one-shot heavy switches, linked bridge groups, upright-only goals, restart, and three last-valid-state revives per level.
+- **15 editable level assets** and an ordered campaign asset. Layouts are no longer compiled into C++.
+- **Bloxorz Level Designer:** paint/erase cells, place start/goal markers, link switches and bridges, use Undo/Redo, validate solvability, and launch a selected puzzle.
+- Minimal gameplay HUD, animated completion/failure cards, restrained contact/bridge pulses, smaller Niagara completion feedback, and synthesized sound cues.
+- An original, seamlessly looping ambient stereo track with fade-in, menu/failure ducking, and audio mute controls.
 
-`ABloxorzPlayerController` maps input to discrete commands, with one short-lived buffered command during a roll. `ABloxorzHUD` draws scaled controls and modal panels. `UBloxorzProgress` stores best move counts and progression locally; unlock data is recorded, not enforced as a level-browsing gate.
+## Run the project
 
-Level/tile records and presentation timings are Blueprint-exposed. Place a Board actor and populate its Level to override the campaign with a custom puzzle. Extend tile behavior in the simulation rather than in effects actors. Cell size, roll/fall duration, camera feedback, and Niagara assets are exposed for tuning.
+Use Unreal Engine 5.8 and a supported Windows C++ toolchain. The Development Editor build was verified with **UE 5.8.3**, Visual Studio 2022/MSVC 14.44, and Windows SDK 10.0.26100.
 
-## Reference fidelity
+From the repository root in PowerShell:
 
-All 15 authored levels are ported. Mechanics include fragile tiles, light toggle switches, upright-only one-shot heavy switches, linked bridges, falling, restart, three last-valid-state revives per level, and upright-only goals. No split-block mechanics exist in the supplied Unity implementation, so none were invented.
+```powershell
+$Engine = 'C:\Program Files\Epic Games\UE_5.8'
+$Project = (Resolve-Path '.\BloxorzUnreal.uproject').Path
 
-Fragile tiles fail only while upright and do not permanently disappear. Support is checked before switch effects, with no same-move recheck after a toggle. Light switches trigger for each occupied-cell landing, including overlap. These details follow the supplied reference rather than assumptions about the commercial game. `Docs/UnityCampaign.json` records extracted data; `BloxorzCampaign.cpp` is its runtime port.
+& "$Engine\Engine\Build\BatchFiles\Build.bat" BloxorzUnrealEditor Win64 Development $Project -WaitMutex -NoHotReloadFromIDE
+& "$Engine\Engine\Binaries\Win64\UnrealEditor.exe" $Project
+```
 
-## Controls
+Press **Play** in the editor. `/Game/Maps/Puzzle` is intentionally empty: the game mode constructs the board from the campaign assets at runtime. Close the editor normally before rebuilding if it holds the gameplay DLL; preserve unsaved work.
 
-- Move: WASD or arrow keys
-- Restart: R
-- Enter / Space: revive, continue after completion, or resume menu
-- Escape: menu; M: mute; Page Up / Down: browse levels
-- Mouse: HUD panel buttons
+| Action | Control |
+|---|---|
+| Roll | WASD / arrow keys |
+| Restart | R |
+| Revive / continue / resume | Enter or Space, when available |
+| Pause menu | Escape or Menu button |
+| Toggle music and effects | M or Audio button |
+| Browse levels | Page Up / Page Down |
+| Panel actions | Mouse buttons |
 
-Open `BloxorzUnreal.uproject` and press Play. The Puzzle map is intentionally empty: the game mode constructs the board at runtime.
+## Create levels without rebuilding
 
-## Build and tests
+Open **Tools → Bloxorz Level Designer**:
 
-Validated with Unreal 5.8.3, VS 2022 MSVC 14.44, and Windows SDK 10.0.26100. Build `BloxorzUnrealEditor Win64 Development` with the engine's Build.bat and the absolute project path. Packaging settings include runtime Art, Audio, FX and the Puzzle map.
+1. Create/select a puzzle and set its grid dimensions and start orientation in Details.
+2. Paint tiles, place Start/Goal, and link switch/bridge groups.
+3. Choose **Validate / solve**, then **Save** and **Play selected**.
+4. Choose **Add to campaign**; use **Campaign order** to reorder the Levels array and save.
 
-Run UnrealEditor-Cmd with `-ExecCmds="Automation RunTests Bloxorz; Quit" -unattended -nullrhi`. Five tests cover roll/tile rules, heavy switches and support ordering, twelve visual pivot endpoints, and breadth-first solvability of all fifteen levels.
+Puzzles are stored as `UBloxorzLevelAsset` assets in `/Game/Levels`; `/Game/Levels/DA_Campaign` stores their ordered soft references. `BloxorzCampaign.cpp` only loads those references—it contains no authored layouts. The editor module is separate from runtime gameplay.
 
-For an actual rendered replay, use `/Game/Maps/Puzzle -game -RenderOffscreen -BloxorzLevel=13 -BloxorzReplay=UURRRDDLRUUUULULLLD -BloxorzCapture -BloxorzProfile -unattended`. Level indices are zero-based. Profile mode exits after twenty gameplay seconds and logs sampled real-time mean/p95 frame intervals following a three-second warm-up. Do not combine it with fixed-timestep `-benchmark`. This is a smoke measurement, not a shipping performance guarantee.
+This is a **manual grid-authoring tool**, not a random/procedural puzzle generator. A bounded breadth-first solver checks structural validity and finds a solution; reaching the search limit is reported as unknown, not unsolvable.
 
-See [validation notes](Docs/Validation.md) for coverage and remaining manual checks.
+[Complete Unreal authoring guide](Docs/UnrealLevelAuthoring.md)
+
+## Engineering architecture
+
+| Component | Responsibility |
+|---|---|
+| `FBloxorzSimulation` | Pure roll transitions, support checks, switch effects, and goal rules; no physics or animation dependencies. |
+| `UBloxorzLevelAsset` / `UBloxorzCampaignAsset` | Designer-owned puzzle records and campaign ordering. |
+| `ABloxorzBoard` | Pending logical moves, presentation phases, edge-pivot animation, camera fitting, feedback, and audio. |
+| `ABloxorzPlayerController` | Discrete commands and UI actions. |
+| `ABloxorzHUD` | Scaled canvas UI, modal hit testing, and outcome transitions, isolated in `BloxorzHUD.cpp`. |
+| `BloxorzUnrealTools` | Editor-only Slate designer, transactions, validation, asset creation, and standalone preview. |
+
+Each move resolves at the grid level before animation. The Board commits a valid pending state at landing; a failed move preserves the last safe state. Bridges, particles, and camera feedback never determine puzzle outcomes. Core level records and presentation/audio parameters are Blueprint-exposed.
+
+Local progress stores best move counts and progression. Browsing is not unlock-gated; standalone custom-puzzle previews do not write campaign progress. Best moves remain index-keyed, so reordering a shipped campaign requires a save-migration policy.
+
+## Mechanics and reference fidelity
+
+The initial layouts and behavior were ported from the supplied reference project, rather than newly designed for this recreation. Fragile tiles fail only when the block is upright and do not permanently disappear. Support is checked **before** switch effects, with no second support check on that move. Light switches trigger on valid occupied-cell landings, including overlap; heavy switches trigger once per reset while upright.
+
+The supplied reference has no split-block mechanic, so none is claimed here. Completion uses an explicit Continue action. `Docs/UnityCampaign.json` is the extraction snapshot; the one-time migration tool refuses to overwrite existing edited assets. There is no live Unity synchronization.
+
+## Verification
+
+**Verified:** Development Editor compilation; seven passing automation tests; preservation of all 15 reference layouts after asset migration; offscreen completion/failure captures; rendered level-14 and level-15 solutions in 19 and 39 moves respectively.
+
+Run the regression suite:
+
+```powershell
+& "$Engine\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" $Project '-ExecCmds=Automation RunTests Bloxorz; Quit' -unattended -nullrhi -nosplash
+```
+
+Tests cover the roll table, tile rules, heavy-switch/support ordering, twelve pivot endpoints, asset-backed campaign solvability, authoring validation, and paint/link operations.
+
+**Still pending:** broader interactive authoring/UI edge cases, audio listening/mix review, unusual viewport sizes, packaged Development/Shipping builds, and longer target-hardware profiling. Fixed-timestep replays are behavioral tests—not performance measurements or a sustained-60-FPS claim.
+
+## Presentation and project notes
+
+- [UI/VFX/music update and tuning](Docs/PresentationUpdate.md)
+- [Validation evidence and remaining checks](Docs/Validation.md)
+- [Architecture/context handoff](PROJECT_CONTEXT.md)
+- [Reference-project level-authoring guide](Docs/UnityLevelAuthoring.md)
 
 ## Asset provenance
 
-Rounded mesh, materials, and synthesized sound cues were created for this project. `Tools/build_assets.py` rebuilds presentation assets through Unreal's Python commandlet; Python and Editor Scripting plugins are editor tooling. Niagara assets derive from Epic's bundled RadialBurst template and are subject to the Unreal Engine content license. Level layouts were supplied by the project owner; no ownership of the Bloxorz concept is claimed and no blanket third-party asset license is implied.
+The rounded mesh, materials, synthesized sound cues, and ambient composition were created for this project. `Tools/build_assets.py` and `Tools/build_presentation_update.py` rebuild generated presentation assets through Unreal's Python commandlet. Niagara derives from Epic's bundled RadialBurst template; typography uses bundled Roboto engine-font resources. Those resources retain their respective licenses.
+
+No Friv branding or proprietary presentation assets are included. Reference layouts were supplied by the project owner; this project does not claim ownership of the Bloxorz concept or imply a blanket license for third-party content.
